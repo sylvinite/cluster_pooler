@@ -1,48 +1,52 @@
 import re
 import pdb
 from collections import defaultdict
-from ecdsa.util import string_to_number
-from ecdsa import ecdsa
+from collections import Counter
 
-class Tree(defaultdict):
-    def __init__(self, value=None):
-        super(Tree, self).__init__(Tree)
-        self.value = value
+def minBins_readspace(reads):
+    return sum(reads)/binMax
 
-def idealBins(readIndexPair):
-    indexer = defaultdict()
-    readIt = 0
-    binSize = 320000000
-    for f in readIndexPair:
-        pdb.set_trace()
-        readIt += f
-        indexer[readIndexPair[f]] == 1
-    minBins = readIt/binSize
-    return minBins
+def minBins_indexIt(index):
+    count = Counter()
+    for tag in index:
+        count[tag] += 1
+    return count
+
+""" Attempt 1: No internal order, no threshold, no initial placement of many index clusters etc.  
+"""  
+def crude_Binner(sample, reads, index):
+    if minBins_indexIt(index) > minBins_readspace(reads):
+        initialBins = minBins_indexIt(index)
+    else:
+        initialBins = minBins_readspace(reads)
+    
+    binList = list()
+    bin = list()
+    n = 0
+    while n < initialBins:
+        binList.append(bin)
+    
+
 
 fileName = open('./P2652.txt', 'r')
 counter = 0
-sampleReadPair = {}
-readIndexPair = {}
+binMax = 320000000
+sample = list()
+reads = list()
+lanePerc = list() 
+index = list()
 pattern=re.compile("(P[0-9]{3,5}_[0-9]{3,5}) ([0-9]+) ([0-9]+\.[0-9]+) ([A-Z]+)")
-#pattern=re.compile("(P[0-9]{3,5}_[0-9]{3,5})")
-while fileName.readline():
-    line = fileName.readline()
+for line in fileName:
     if pattern.search(line):
-        sample = pattern.search(line).group(1)
-        reads = int(pattern.search(line).group(2))
-        lanePerc = float(pattern.search(line).group(3))
-        index = pattern.search(line).group(4)
-        sampleReadPair[sample] = reads
-        readIndexPair[reads] = index
-        
+        sample.append( pattern.search(line).group(1) )
+        reads.append(binMax - int(pattern.search(line).group(2)) )
+        lanePerc.append( float(pattern.search(line).group(3)) )
+        index.append( pattern.search(line).group(4) )
         counter+=1
-print idealBins(readIndexPair)
 
-#Attempt 1: No internal order, no threshold, no initial placement of many index clusters etc.
-pants = list()
-#for f in readIndexPair:
-    
+print minBins_readspace(reads)
+print minBins_indexIt(index)
+
     
         
 
