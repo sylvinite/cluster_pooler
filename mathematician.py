@@ -20,7 +20,7 @@ def idealBins(readIndexPair):
     minBins = readIt/binSize
     return minBins
 
-fileName = open('/Users/isaksylvin/Documents/P2652.txt', 'r')
+fileName = open('./P2652.txt', 'r')
 counter = 0
 sampleReadPair = {}
 readIndexPair = {}
