@@ -1,52 +1,63 @@
 import re
 import pdb
 from collections import defaultdict
-from collections import Counter
 
-def minBins_readspace(reads):
-    return sum(reads)/binMax
+#Attempt one, just pulls randomly to new bins
+def crudeBinning(struct):
+    bins = defaultdict(list)
+    binCounter = 1
+    for k, v in struct.items():   
+        newBin = True
+        for num in bins:
+            if reads < spaceLeft(bins[num]):
+                sample = {}
+                sample[k] = v
+                bins[num].append(sample)
+                newBin = False
+                break
+        if newBin:
+            sample = {}
+            sample[k] = v
+            bins[binCounter].append(sample)
+            binCounter += 1
+    return bins
+        
+def spaceLeft(struct): 
+    binMax = 320000000
+    total = 0
+    if not (struct == []):
+        for ceg in struct:
+           total  += ceg.values()[0].keys()[0]
+    return binMax - total
 
-def minBins_indexIt(index):
-    count = Counter()
-    for tag in index:
-        count[tag] += 1
-    return count
+def printer(struct):
+    for f in struct.items():
+        print "Bin #" , f[0]
+        pdb.set_trace()
+        print struct.items()
 
-""" Attempt 1: No internal order, no threshold, no initial placement of many index clusters etc.  
-"""  
-def crude_Binner(sample, reads, index):
-    if minBins_indexIt(index) > minBins_readspace(reads):
-        initialBins = minBins_indexIt(index)
-    else:
-        initialBins = minBins_readspace(reads)
-    
-    binList = list()
-    bin = list()
-    n = 0
-    while n < initialBins:
-        binList.append(bin)
-    
-
-
-fileName = open('./P2652.txt', 'r')
 counter = 0
-binMax = 320000000
-sample = list()
-reads = list()
-lanePerc = list() 
-index = list()
 pattern=re.compile("(P[0-9]{3,5}_[0-9]{3,5}) ([0-9]+) ([0-9]+\.[0-9]+) ([A-Z]+)")
+binMax = 320000000
+fileName = open('./P2652.txt', 'r')
+init = dict()
+
+#Initializes data
 for line in fileName:
     if pattern.search(line):
-        sample.append( pattern.search(line).group(1) )
-        reads.append(binMax - int(pattern.search(line).group(2)) )
-        lanePerc.append( float(pattern.search(line).group(3)) )
-        index.append( pattern.search(line).group(4) )
+        sample = pattern.search(line).group(1) 
+        reads = (binMax - int(pattern.search(line).group(2)) )
+        lanePerc =  float(pattern.search(line).group(3)) 
+        index =  pattern.search(line).group(4) 
         counter+=1
+        init[sample] = dict()
+        init[sample][reads] = index
 
-print minBins_readspace(reads)
-print minBins_indexIt(index)
-
+xy = crudeBinning(init)
+printer(xy)
+testa = list()
+        
+        
     
         
 
