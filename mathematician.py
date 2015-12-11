@@ -1,7 +1,6 @@
 import re
+from collections import defaultdict, Counter
 import pdb
-from collections import defaultdict
-from copy import copy, deepcopy
 
 binMax = 320000000
 
@@ -66,15 +65,38 @@ def avail_bin_space(bin):
 """    
 def bin_printer(bin):
     for num in bin:
+        
         print '***Bin #' , num ,'***'
-        pdb.set_trace()
         for item in bin[num].items():
             print item[0] ,"{0:.2f}".format((float)(item[1][0])/1000000),'M', item[1][1]
-            
-def stats(bin):
-    print 'Outputs general stats for the assignment'
+        print
+def bin_stats(bin):
+    tag_its = Counter()
+    emptySpace = dict()
+    totalBins = bin.keys()[-1]
+    
+    for num in bin.keys():
+        emptySpace[num] = (avail_bin_space(bin[num])/(binMax/1000000)) 
+    spaceUsed = (totalBins*binMax) - sum(emptySpace.values())
+    #Odd calculation to avoid truncation
+    minBins_size = (float)(spaceUsed/(binMax/100))/100
+    for binNo in bin.values():
+        for tag in binNo.values():
+            barcode = tag[1]
+            tag_its[barcode] += 1
+        
+    print 'Total bins: ', totalBins
+    print 'Minimal amount of bins (size): ', minBins_size
+    print 'Most common tags: ' , tag_its.most_common()
+    print 'Empty space per bin (ppm): ', emptySpace.values()
+    print
+
+
+        
     
 file = open('.\P2652.txt', 'r')
 bin = readdata(file)
 output = simpleBinner(bin)
+bin_stats(output)
 bin_printer(output)
+
