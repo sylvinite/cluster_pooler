@@ -62,7 +62,7 @@ def avail_bin_space(bin):
         return binMax
 
 """ Prints info for each sample in each bin
-    Caution: Most value positions are hardcoded
+    Caution: Most value positions are hardcodedd
 """    
 def bin_printer(bin):
     for num in bin:
