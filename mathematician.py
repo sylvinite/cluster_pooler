@@ -70,6 +70,7 @@ def bin_printer(bin):
         for item in bin[num].items():
             print item[0] ,"{0:.2f}".format((float)(item[1][0])/1000000),'M', item[1][1]
         print
+        
 def bin_stats(bin):
     tag_its = Counter()
     emptySpace = dict()
