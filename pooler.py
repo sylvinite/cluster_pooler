@@ -2,8 +2,9 @@ import re
 from collections import defaultdict, OrderedDict, Counter
 import time
 import pdb
+import sys
 
-
+sys.setrecursionlimit(10000) # 10000 is an example, try with different values
 minClust = 320000000
 clust_per_lane = 320000000
 
@@ -98,12 +99,16 @@ def greedyBinnerDeep(init):
     Caution: File composition is hardcoded
 """
 def confidentBinner(init, threshold):
-    #Big first (OD is actually backwards, but pop works correctly
-    init = OrderedDict(sorted(init.iteritems(),key=lambda (k,v): v[0],reverse=False))
     bin = defaultdict(set)
     maxBins = 200
+    tag_its = Counter()
+    
+    for tag in init.values():
+        tag_its[tag[1]] += 1
+    unique = len(tag_its)
     
     while not init == {}:
+        #Big first (OD is actually backwards, but pop works correctly
         init = OrderedDict(sorted(init.iteritems(),key=lambda (k,v): v[0],reverse=False))
         k, v = init.popitem()
         for num in xrange(1, maxBins):
@@ -113,11 +118,11 @@ def confidentBinner(init, threshold):
             if not tag_present(v[1], bin[num]) and suf_reads(v[0], bin[num]):
                 bin[num][k] = v
                 expressed = clust_per_lane/len(bin[num].keys())
-                if expressed < v[0]:
-                        init[k] = [v[0] - expressed, v[1]]
                 break
             #This if statement is muy importante to be right
-            elif not tag_present(v[1], bin[num]) and decreases_oe(v[0], bin[num], threshold):
+            #elif not tag_present(v[1], bin[num]) and decreases_oe(v[0], bin[num], threshold, unique):
+            #Works better than decreases_oe lol
+            elif not tag_present(v[1], bin[num]) and broken_samples(v[0], bin[num]) < 4:
                 bin[num][k] = v
                 #Retain all values that weren't pushed into OE, but subtracts the reads entered
                 expressed = clust_per_lane/len(bin[num].keys())
@@ -129,11 +134,188 @@ def confidentBinner(init, threshold):
                     
     return bin
 
+""" Scans a bin for unique tags
+"""
+def unique_tags(bin):
+    tag_its = Counter()
+    for tag in bin.values():
+        tag_its[tag[1]] += 1
+    unique = len(tag_its)
+    return unique
+
+""" Creates an amount of bins equal to unique barcodes and place reads into sets that fits the sample.
+    If difference is greater than offset, attempts to split the sample into smaller bins to resolve it.
+    If a bin cant be filled with samples they are reevaluated
+"""
+def divide_n_conquer(init, offset):
+    bin = defaultdict(set)
+    output = defaultdict(set)
+    #Scans for unique tags
+    unique = unique_tags(init)
+    
+    #Creates all necessary bins
+    #xrange never actually hits maximum
+    for num in xrange(1,unique+1):
+        bin[num] = dict()
+    
+    while not init == {}:
+        init = OrderedDict(sorted(init.iteritems(),key=lambda (k,v): v[0],reverse=False))
+        k, v = init.popitem()
+        dividers = searchspace(v[0], offset, unique)
+        for n in dividers:
+            bin[n][k] = v
+         
+    
+    #Tally into actual bins
+    currentBin = 1
+    for n in bin:
+        bin[n] = OrderedDict(sorted(bin[n].iteritems(),key=lambda (k,v): v[0],reverse=True))
+        while len(bin[n]) >= n and unique_tags(bin[n]) >= n:
+            #Still needs fixing
+            counter = 0
+            output[currentBin] = dict()
+            while counter < n:
+                for k,v in bin[n].items():
+                    if not tag_present(v[1], output[currentBin]):
+                        output[currentBin][k] = v
+                        del bin[n][k]
+                        counter += 1
+                        break
+            currentBin +=1
+            
+    """
+    rem_pool = defaultdict(set)
+    for n in xrange(1,13):
+        while not bin[n] == {}:
+            k,v = bin[n].popitem()
+            rem_pool[k] = v
+    rem_tags = unique_tags(rem_pool)  
+    rem_pool = OrderedDict(sorted(rem_pool.iteritems(),key=lambda (k,v): v[0],reverse=False))
+    """
+    #pdb.set_trace()
+
+    #Tally remains into bins
+    #Could be improved with new offset and unique param
+    for n in bin:
+        if not bin[n] == OrderedDict():
+            for k, v in bin[n].items():
+                #Can't split away all elements of a bin, pulls elements from smaller bin to fill             
+                if not searchspace_inner(v[0], offset, 2, list(xrange(n+1, n+3)), unique):
+                    #If tag not in bin, put it in there and divy away. Repeat until bin is empty
+                    for m in xrange(n+1, unique):
+                        for k, v in bin[m].items():  
+                            #Recruit items to "semi"-fill a big bin
+                            while not tag_present(v[1], bin[n]) and unique_tags(bin[n]) < n:
+                                bin[n][k] = v
+                                del bin[m][k]     
+                        #If there's enough to fill an output bin, do it
+                        if unique_tags(bin[m]) >= n:
+                            currentBin +=1
+                            output[currentBin] = dict()
+                            for k, v in bin[m].items():
+                                if not tag_present(v[1], output[currentBin]):
+                                    output[currentBin][k] = v
+                                    del bin[m][k]
+                #If elements can be split away
+                elif n+3 <= 13:
+                    divs = searchspace_inner(v[0], offset, 2, list(xrange(n+1, n+3)), unique)
+                    if divs == [12,13]:
+                        pdb.set_trace()
+                    #If new target bin doesn't already contain that TAG
+                    for num in divs:
+                        if tag_present(v[0],bin[num]):
+                            divs = searchspace_inner(v[0], offset, len(div), divs, unique)
+                    for num in divs:
+                        bin[num][k] = v
+                    del bin[n][k]
+    pdb.set_trace()
+    #If bin is not empty then there is a serious problem
+    return output
+
+""" Fits a read length into a sum of integer divisions, where every integer is unique and
+    the maximum integer is equal to the amount of unique barcodes for the dataset
+    :param numToPlace Read to fit into the sum
+    :param offset Maximum padding around each read (partial overexpression)
+    :param unique_barcodes Unique barcodes
+    :return A list of integers to divide the clust_per_lane by
+"""
+def searchspace(numToPlace, offset, unique_barcodes):
+    chunks = 1
+    positions = list(xrange(1, chunks+1))
+    pos = searchspace_inner(numToPlace, offset, chunks, positions, unique_barcodes)
+    return pos
+
+""" Inner function for searchspace
+    :param numToPlace Read to fit into the sum
+    :param offset Maximum padding around each read (partial overexpression)
+    :param chunks Minimum dividers to use
+    :param posits Starting dividers
+    :param max_chunks Unique barcodes
+    :return A list of integers to divide the clust_per_lane by
+"""
+#remove chunks parameter, can be replaced by len(posits) or similar
+def searchspace_inner(numToPlace, offset, chunks, posits, max_chunks):
+    #print posits
+    #Checks if goal was reached
+    sum = 0
+    for value in posits:
+        sum += clust_per_lane/value
+    if numToPlace < sum and numToPlace*(1+offset) >= sum:
+        return posits
+    elif numToPlace < clust_per_lane/max_chunks:
+            posits[-1] = max_chunks
+            return posits
+    else:
+        for holes in xrange(1, chunks+1):
+            #Moves last box
+            if holes == 1 and posits[-1*holes] < max_chunks:
+                posits[-1*holes] += 1
+                return searchspace_inner(numToPlace, offset, chunks, posits, max_chunks)
+            #Moves not-last box and resets rest
+            elif len(posits) > 1 and posits[-1*holes] < posits[-1*(holes-1)] -1:
+                posits[-1*holes] += 1
+                
+                for spots in xrange(holes-1, 0, -1):
+                    #Should only increase if its possible to increase the spot
+                    if posits[-1*spots]  < posits[-1*spots -1]:
+                        posits[-1*spots] = posits[-1*holes] + 1
+                return searchspace_inner(numToPlace, offset, chunks, posits, max_chunks)
+        #We reached the end and want to split
+        if chunks < max_chunks:
+            if numToPlace < sum:
+                # Error, want to split but split increases size"
+                return False
+            return searchspace_inner(numToPlace, offset, chunks+1, list(xrange(1, chunks+2)), max_chunks)
+        #We reached the complete end
+        else:
+            print "Error, no solution found"
+            return False
+
+def bin_filled(bin):
+    bin_filled = 0
+    for k,v in bin.items():
+        bin_filled += v[0]
+    return bin_filled
+
+""" Checks how many samples in a bin a new insert breaks
+    :param read new insert
+    :return broken samples (including new one)
+"""
+def broken_samples(read, bin):
+    broken_samples = 0
+    new_size = clust_per_lane/(len(bin.keys())+1)
+    for k, v in bin.items():
+        if new_size < v[0]:
+            broken_samples += 1
+    if read < new_size:
+            broken_samples += 1
+    return broken_samples
+
 """ Tallies OE for a lane/bin
     :param threshold Percentage OE of clust_per_lane that this function is ok with
     :return Whether adding the element to the lane/bin reduces lane/bin OE
 """
-def decreases_oe(reads, bin, threshold):
+def decreases_oe(reads, bin, threshold, unique):
     existing_samples = len(bin.keys())
     init_oe = 0
     post_oe = 0
@@ -146,6 +328,9 @@ def decreases_oe(reads, bin, threshold):
         for k, v in bin.items():
             if (clust_per_lane/(existing_samples + 1) - v[0] > 0):
                 post_oe += clust_per_lane/(existing_samples + 1) - v[0]
+            #OE can actually never be less than clust_per_lane/unique tags
+            elif v[0] - clust_per_lane/(existing_samples + 1)  < clust_per_lane/unique:
+                post_oe += clust_per_lane/unique - (v[0] - clust_per_lane/(existing_samples + 1))
         if (clust_per_lane/(existing_samples + 1) - reads > 0):
             post_oe += clust_per_lane/(existing_samples + 1) - reads
         
@@ -156,9 +341,11 @@ def decreases_oe(reads, bin, threshold):
 
 """ Checks if specific tag is present in a bin
     Caution: value[1] is hardcoded to represent tag
+    :param tag barcode to look for
+    :param bin bin where the tag may exist
+    :return presense of barcode
 """
 def tag_present(tag, bin):
-    
     for k, v in bin.items():
         if v[1] == tag:
             return True
@@ -202,36 +389,40 @@ def suf_reads(thres, bin):
     return False
 
 """ Prints info for each sample in each bin
-    Now hardlocked for CONFIDENT
     Caution: Most value positions are hardcoded
 """ 
 def gen_stats(bin):
     tag_its = Counter()
     clusters = 0
-
-    
+ 
     for tag in bin.values():
         barcode = tag[1]
         tag_its[barcode] += 1
         clusters += tag[0]
-        
 
     print 'Reads per lane:', clust_per_lane/1000000, 'M'
     print 'Sample reads requirement:', minClust/1000000, 'M'
     print 'Most common tags (descending):' , tag_its.most_common()
-    print 'Lowest possible bins:', clusters/clust_per_lane
+    print 'Unique tags:', len(tag_its)
+    print 'Lowest possible bins (size alone):', clusters/clust_per_lane
     print
     
 """ Prints info for each sample in each bin
-    Now hardlocked for CONFIDENT
     Caution: Most value positions are hardcoded
 """    
 def bin_printer(bin):
     for num in bin:
+        used_space = 0
         print '***Bin #' , num ,'***'
         print 'Sample Reads_Prior TAG Expressed'
         for item in bin[num].items():
             print item[0] ,"{0:.2f}".format((float)(item[1][0])/1000000),'M', item[1][1], clust_per_lane/(len(bin[num].keys())*1000000), 'M'
+            if item[1][0] < clust_per_lane/(len(bin[num].keys())):
+               used_space += item[1][0]
+            else:
+                used_space += clust_per_lane/(len(bin[num].keys()))
+        print '--- --- --- --- --- ---'
+        print 'Items:', len(bin[num].keys()), '"Unused" space:', "{0:.2f}".format(1-(float)(used_space)/clust_per_lane)
         print
 
 """ Prints stats after an algorithm has been ran. Probably pretty prone to break
@@ -239,7 +430,6 @@ def bin_printer(bin):
 def algo_stats(init, bin):
     tag_its = Counter()
     clusters = 0
-
     
     for tag in init.values():
         barcode = tag[1]
@@ -249,17 +439,15 @@ def algo_stats(init, bin):
     bins = bin.keys()[-1]
     algo_clusters = (bins*clust_per_lane)/1000000
     print "Bins used:", bins, '; Ideal:', clusters/clust_per_lane
-    print "Overexpression:", algo_clusters, 'M', "OR", "{0:.2f}".format(float(bins*100)/(clusters/clust_per_lane)-100), "%"
-
-file = open('.\P2652.txt', 'r')
-bin = readdata(file)
-gen_stats(bin)
-
+    print "Overexpression:", algo_clusters, 'M', "OR", "{0:.2f}".format(float(bins)/(clusters/clust_per_lane)), "OPT"
+    
 def confidentCalibration(bin):
     best_thres = 1000000
     worst_thres = 0
     least_bins = 1000000
     most_bins = 0
+    
+    print "Calibrating Confident..."
     
     for thres in xrange(0, 8000, 50):
         thres = float(thres)/1000
@@ -271,12 +459,16 @@ def confidentCalibration(bin):
             worst_thres = thres
             most_bins = output.keys()[-1]
         
+    print "Calibration complete!"
     #return {best_thres, least_bins, worst_thres, most_bins}
     return best_thres
-        
-    
+
+file = open('.\P2652.txt', 'r')
+bin = readdata(file)
+gen_stats(bin)
+ 
 """
-print "SIMPLE"
+print "FIRST FIT ALGO"
 simple_start = time.time()
 simple_output = simpleBinner(bin)
 simple_end = time.time()
@@ -294,21 +486,23 @@ greedy_output = read_overflow(greedy_output)
 bin_printer(greedy_output)
 print("Greedy time:", "%s seconds" % (greedy_end - greedy_start))
 """
-
+"""
 print "CONFIDENT"
 conf_start = time.time()
-threshold = confidentCalibration(bin)
+#threshold = confidentCalibration(bin)
+threshold = 0.05
 conf_output = confidentBinner(bin, threshold)
 conf_end = time.time()
 bin_printer(conf_output)
 print("Confident time:", "%s seconds" % (conf_end - conf_start))
+print("Threshold:", threshold)
 algo_stats(bin, conf_output)
-
-
 """
-bin_stats(simple_output)
-bin_stats(greedy_output)
 
-
-"""
+print "DIVIDE AND CONQUER"
+dnc_start = time.time()
+dnc_output = divide_n_conquer(bin, 0.2)
+#pos = searchspace(120000000, 0.1, 12)
+dnc_end = time.time()
+#bin_printer(dnc_output)
 
