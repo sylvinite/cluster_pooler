@@ -21,7 +21,6 @@ def readdata(file):
             index =  pattern.search(line).group(4)
             if (remain > 0): 
                 initialBin[sample] = [remain, index]
-
     return initialBin
 
 """ Pools data into bins in the most mundane way
@@ -59,6 +58,7 @@ def greedyBinnerDeep(init):
         pdb.set_trace()
         return init
 
+    init = OrderedDict(sorted(init.iteritems(),key=lambda (k,v): v[0],reverse=False))
     bin = defaultdict(set)
     #Big first, naturally has least overexpression
     maxBins = 2000
@@ -272,6 +272,113 @@ def divide_n_conquer(init, offset):
                             break
                     currentBin+=1
     return output
+
+""" Only partions samples into a set identical bins with 1/x. Better than simpleBinner, but noticably worse than DnC
+    Hardcoded to only support up to 1 lane of samples.
+"""
+def single_or_clones(init):
+    if(minClust > clust_per_lane):
+        print "Sample needs more than a single lane, algo does not currently support this action"
+        pdb.set_trace()
+    return init
+    
+    init = OrderedDict(sorted(init.iteritems(),key=lambda (k,v): v[0],reverse=False))
+    bin = defaultdict(set)
+    output = defaultdict(set)
+    #Scans for unique tags
+    unique = unique_tags(init)
+    slots = soc_list_creator(unique)
+    current_out_bin = 1
+    output[current_out_bin] = defaultdict(set)
+    #Creates all necessary bins
+    for k,v in slots.items():
+        bin[k] = dict()
+    
+    while not init == {}:
+        k, v = init.popitem()
+        pos = div_multipliers(v[0], slots, unique)
+        bin[pos][k] = v
+    #k[2]/float(1000000) sorts multi-bins in correct order   
+    bin = OrderedDict(sorted(bin.iteritems(),key=lambda (k,v): k[0]/float(k[2])-k[2]/float(1000000),reverse=False))
+    
+    #Dump piles into lanes
+    for div,kv in bin.items():
+        t=div[0]
+        n=div[2]
+
+        if unique_tags(kv) >= n:
+            kv_sorted = OrderedDict(sorted(kv.iteritems(),key=lambda (k,v): v[0],reverse=False))
+            for key, val in kv_sorted.items():
+                if len(output[current_out_bin]) == n:
+                    break
+                if not tag_present(val[1], output[current_out_bin]):
+                    output[current_out_bin][key] = val
+                    del bin[div][key]
+            current_out_bin += 1
+            output[current_out_bin] = defaultdict(set)
+            #item needs to be added to t bins, since it copies xrange is one lower than usual
+            if t > 1:
+                for duplicate in xrange(1, t):
+                    #Fixes reads_remaining
+                    for k,v in output[current_out_bin -1].items():
+                        output[current_out_bin][k] = [v[0]-(1/float(n))*clust_per_lane, v[1]]  
+                    current_out_bin += 1
+                    output[current_out_bin] = defaultdict(set)
+            
+        #Remove the smallest slot from list, put all items into a slot bigger
+        last = bin.keys()[0]
+        if not bin[last] == {} and not last == (1, '/', 1):
+            next_last = bin.keys()[1]
+            for k, v in bin[last].items():
+                bin[next_last][k] = v
+            del bin[last]
+            
+    #Silly hotfix for when we run out of slots
+    if not bin[(1, '/', 1)] == {}:
+        for key, val in bin[(1, '/', 1)].items():
+            output[current_out_bin][key] = val
+            current_out_bin += 1
+            output[current_out_bin] = defaultdict(set)
+    
+    
+    del output[current_out_bin]
+    #verify_samples(output)
+    return output
+        
+def soc_list_creator(unique):
+    #output could be list, since key can just be evaluated.
+    numbers = dict()
+    for namnare in xrange(1, unique+1):
+        for taljare in xrange(1, namnare+1):
+                temp = taljare,'/',namnare
+                numbers[temp] =taljare/float(namnare)
+                
+    numbers = OrderedDict(sorted(numbers.iteritems(),key=lambda (k,v): v,reverse=False))
+    
+    #Remember. If multiple divs equal the same value, search from unique -> 1
+    return numbers
+
+def verify_samples(bin):
+    count = Counter()
+    for bins in bin:
+        for key in bin[bins].keys():
+            count[key] += 1            
+    
+    return len(count)
+
+def div_multipliers(numToPlace, slots, unique):
+ 
+    for k,v in slots.items():
+        t = k[0]
+        n = k[2]
+        if numToPlace < v*clust_per_lane:
+            #Check if there's equal div with bigger numbers
+            for mult in xrange(unique, 0, -1):
+                if n*mult <= unique:
+                    n = n*mult
+                    t = t*mult
+                    return (t, '/', n)  
+
 
 """ Fits a read length into a sum of integer divisions, where every integer is unique and
     the maximum integer is equal to the amount of unique barcodes for the dataset
@@ -542,13 +649,15 @@ def dnc_calibration(bin):
     #return {best_thres, least_bins, worst_thres, most_bins}
     return best_thres
 
-file = open('.\P2652.txt', 'r')
+
+file = open('./P2652.txt', 'r')
 minClust = 320000000
 clust_per_lane = 320000000
 
 bin = readdata(file)
 gen_stats(bin)
 
+"""
 print "FIRST FIT ALGO"
 simple_start = time.time()
 simple_output = simpleBinner(bin)
@@ -557,9 +666,7 @@ simple_output = read_overflow(simple_output)
 bin_printer(simple_output)
 print("Simple time:", "%s seconds" % (simple_end - simple_start))
 
-"""
 #Ironically works almost identical to simple. Without splitting its impossible to get good output
-#Also has some kind of destruction issue
 print "GREEDY"
 greedy_start = time.time()
 greedy_output = greedyBinnerDeep(bin)
@@ -567,8 +674,7 @@ simple_output = read_overflow(greedy_output)
 greedy_end = time.time()
 bin_printer(greedy_output)
 print("Greedy time:", "%s seconds" % (greedy_end - greedy_start))
-pdb.set_trace()
-"""
+
 print "CONFIDENT"
 conf_start = time.time()
 #threshold = confidentCalibration(bin)
@@ -588,12 +694,25 @@ dnc_end = time.time()
 bin_printer(dnc_output)
 print("DnC time:", "%s seconds" % (dnc_end - dnc_start))
 print("Threshold:", threshold)
+"""
 
+print "SINGLE OR CLONES"
+soc_start = time.time()
+soc_output = single_or_clones(bin)
+soc_end = time.time()
+bin_printer(soc_output)
+print("SoC time:", "%s seconds" % (soc_end - soc_start))
 
+"""
 print "SIMPLE STATS"
 algo_stats(bin, simple_output)
+print "GREEDY STATS"
+algo_stats(bin, greedy_output)
 print "CONF STATS"
 algo_stats(bin, conf_output)
 print "DNC STATS"
 algo_stats(bin, dnc_output)
+"""
+print "SOC STATS"
+algo_stats(bin, soc_output)
 
