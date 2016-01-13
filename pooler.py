@@ -280,7 +280,7 @@ def single_or_clones(init):
     if(minClust > clust_per_lane):
         print "Sample needs more than a single lane, algo does not currently support this action"
         pdb.set_trace()
-    return init
+        return init
     
     init = OrderedDict(sorted(init.iteritems(),key=lambda (k,v): v[0],reverse=False))
     bin = defaultdict(set)
@@ -339,7 +339,6 @@ def single_or_clones(init):
             output[current_out_bin][key] = val
             current_out_bin += 1
             output[current_out_bin] = defaultdict(set)
-    
     
     del output[current_out_bin]
     #verify_samples(output)
