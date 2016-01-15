@@ -21,6 +21,13 @@ def readdata(file):
             index =  pattern.search(line).group(4)
             if (remain > 0): 
                 initialBin[sample] = [remain, index]
+    #pdb.set_trace()
+    #mini = 0
+    #for k,v in initialBin.items():
+    #    if v[0] > mini:
+    #        mini = v[0]
+    #print mini
+    
     return initialBin
 
 """ Pools data into bins in the most mundane way
@@ -651,7 +658,7 @@ def dnc_calibration(bin):
 
 file = open('./P2652.txt', 'r')
 minClust = 320000000
-clust_per_lane = 320000000
+clust_per_lane = 380000000
 
 bin = readdata(file)
 gen_stats(bin)
