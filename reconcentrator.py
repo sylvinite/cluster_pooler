@@ -135,6 +135,10 @@ def aggregator(struct, target_clusters):
             
     
     #Iteratively rounds to whole percent (min pipette for volume) to reach 100%
+    # ideal_ratio * req_lanes.values() = needed
+    # acc_ratio * total_lanes = current
+    # means a sample can take any whole number between the two
+    # Go down from current to needed 1% at a time until one hits sum(lane) == 100
     acc_ratios = copy.deepcopy(ideal_ratios)
     for index in xrange(1, len(ideal_ratios.keys())+1):
         for sample in xrange(0, len(ideal_ratios[index])):
@@ -155,13 +159,6 @@ def aggregator(struct, target_clusters):
                 if(stuck):
                     total_lanes[index-1] += 1
                  
-                    
-    # ratio * req_lanes.values() = needed
-    # ratio * total_lanes = current
-    # means a sample can take any whole number between the two
-    # Opt for ratio * total_lanes and then go down by 1perc (one sample at a time, that dont pass ratio * req_lanes.values() = needed
-
-    
     #Print output including duplicates
     bin = 0
     for index in xrange(1, len(lane_maps)+1):
