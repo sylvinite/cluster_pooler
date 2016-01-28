@@ -1,7 +1,5 @@
 #!/usr/bin/env python2.7
 
-import pdb
-import json
 import couchdb
 import re
 import math
@@ -108,8 +106,7 @@ def aggregator(struct, target_clusters, project, destid):
     counter = Counter(tempList)
     for values in counter.itervalues():
         if values > 1: 
-            print "Error: This app does NOT handle situations where a sample is present in lanes/well with differing structure!"
-            pdb.set_trace()
+            raise Exception('Error: This app does NOT handle situations where a sample is present in lanes/well with differing structure!')
 
     #Gives how many percent of the lane should give clusters for a specific sample
     for index in lane_maps:
@@ -263,9 +260,10 @@ def aggregator(struct, target_clusters, project, destid):
                     else:
                         wellIndex[0] = 1
                         destNo += 1
-                        if destNo > len(destid):
+                        try:
+                            destid[destNo]
+                        except IndexError:
                             print "Critical error; not enough destination plates provided"
-                            pdb.set_trace()
                             
 @click.command()
 @click.option('--project_id', required=True,help='REQUIRED: ID of project to repool. Examples:P2652, P1312 etc.')
