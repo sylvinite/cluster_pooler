@@ -1,22 +1,31 @@
+#!/usr/bin/env python2.7
+
 import pdb
 import json
 import couchdb
 import re
 import math
-from collections import defaultdict
+from collections import defaultdict, Counter
 import unicodedata
 import csv
 import copy
+import click
+
+from time import time
+from datetime import datetime
+
+from genologics.config import BASEURI, USERNAME, PASSWORD
+from genologics.lims import Lims
+from genologics.entities import Process
 
 #Assumes ind. sample conc measurements have failed. As such it relies on changing relative volume on already normalized samples and structure
 #Structure are retained as conc measurements failure means there's no way to know conc. delta between samples from seperate poolss
-
 def connection():
     couch = couchdb.Server('http://isak:Purpleplant89@tools-dev.scilifelab.se:5984')
     return couch
 
 #Fetches the structure of a project
-def proj_struct(couch, project):
+def proj_struct(couch, project, target_clusters):
     db = couch['x_flowcells']
     view = db.view('names/project_ids_list')
     fc_track = defaultdict(set)
@@ -63,7 +72,7 @@ def proj_struct(couch, project):
                    del fc_track[project][fc][lane]
     return fc_track[project]
 
-def aggregator(struct, target_clusters):
+def aggregator(struct, target_clusters, project, destid):
     clusters_rem = dict()
     clusters_expr = dict()
     lane_maps = dict()
@@ -89,6 +98,18 @@ def aggregator(struct, target_clusters):
             if not mapping in lane_maps.values():
                 lane_maps[counter] = mapping 
                 counter +=1
+    
+    #Crude way to check that no samples are in different TYPES of lanes
+    tempList = list()
+    for k, v in lane_maps.items():
+        for index in xrange(1,len(v)):
+            if not v[index] == 'Undetermined':
+                tempList.append(v[index])
+    counter = Counter(tempList)
+    for values in counter.itervalues():
+        if values > 1: 
+            print "Error: This app does NOT handle situations where a sample is present in lanes/well with differing structure!"
+            pdb.set_trace()
 
     #Gives how many percent of the lane should give clusters for a specific sample
     for index in lane_maps:
@@ -158,35 +179,107 @@ def aggregator(struct, target_clusters):
                         break
                 if(stuck):
                     total_lanes[index-1] += 1
-                 
-    #Print output including duplicates
-    bin = 0
-    for index in xrange(1, len(lane_maps)+1):
-        for dupes in xrange(1, int(total_lanes[index-1])+1):
+     
+                    
+    #Gathers the container id and well name for all samples in project
+    #Cred to Denis for providing a base epp
+    location = dict()
+    lims = Lims(BASEURI, USERNAME, PASSWORD)
+    allProjects = lims.get_projects()
+    for proj in allProjects:
+        if proj.id == project:
+            projName = proj.name 
+            break
+
+    #All normalization processes for project
+    norms=['Library Normalization (MiSeq) 4.0', 'Library Normalization (Illumina SBS) 4.0','Library Normalization (HiSeq X) 1.0']
+    pros=lims.get_processes(type=norms, projectname=projName)
+    #For all processes
+    for p in pros:
+        #For all artifacts in process
+        for o in p.all_outputs():
+            #If artifact is analyte type and has project name in sample
+            if o.type=="Analyte" and project in o.name:
+                location[o.name.split()[0]] = list()
+                location[o.name.split()[0]].append(o.location[0].id)
+                location[o.name.split()[0]].append(o.location[1])
+    
+    
+    #Print stats including duplicates
+    timestamp = datetime.fromtimestamp(time()).strftime('%Y-%m-%d_%H:%M')
+    sumName = projName,  "_summary_", timestamp,".txt"
+    sumName = ''.join(sumName)
+    with open(sumName, "w") as summary:
+        OPT = sum(total_lanes)/sum(req_lanes.values())
+        output = "Ideal lanes (same schema): ", str(sum(req_lanes.values())) , ", Total lanes: ", str(sum(total_lanes)), ", OPT: ", str(round(OPT,3)),'\n'
+        output = ''.join(output)
+        summary.write( output )
+        output = "Unique pools: ", str(len(total_lanes)), ", Average pool duplication: ", str(sum(total_lanes)/float(len(total_lanes))) ,'\n'
+        output = ''.join(output)
+        summary.write( output )
+        
+        bin = 0
+        for index in xrange(1, len(lane_maps)+1):
             bin  += 1
-            print ""
-            print "Bin", bin
+            summary.write('\n')
+            output = "Wells ", str(bin) , '-' , str(bin+int(total_lanes[index-1])-1),':','\n'
+            output = ''.join(output)
+            summary.write( output )
+            bin += int(total_lanes[index-1]-1)
             for counter in xrange(1, len(lane_maps[index])):
-                print lane_maps[index][counter], acc_ratios[index][counter], "%"
-    OPT = sum(total_lanes)/sum(req_lanes.values())
-    print "Min lanes:", sum(req_lanes.values()) , "Total lanes:", sum(total_lanes), "OPT:", OPT
+                output = str(lane_maps[index][counter]),' ', str(acc_ratios[index][counter]), "%",'\n'
+                output = ''.join(output)
+                summary.write( output )
+
     
     #Creates csv   
-    #add timestamp and proj name
-    name = "_repool.csv" 
+    
+    name = projName,"_repool_",timestamp,".csv"
+    name = ''.join(name)
+    wells = ['Empty','A','B','C','D','E','F','G','H']
+    wellIndex = [1, 1]
+    destNo = 0
+    
     with open(name, 'w') as csvfile:
         writer = csv.writer(csvfile)
-        #<source plate ID>,<source well>,<volume>,<destination plate ID>,<destination well>
-        #writer.writerow()
-    
-    #CHECK FOR ODD CASES (2 PROJECTS ONE LANE); NON-DUPLICATE LANES WITH SHARED SAMPLE
-    
+        for index in xrange(1, len(lane_maps)+1):
+            for dupes in xrange(1, int(total_lanes[index-1])+1):
+                for counter in xrange(1, len(lane_maps[index])):
+                    #<source plate ID>,<source well>,<volume>,<destination plate ID>,<destination well>
+                    #Destination well 200 microL, minimum pipette 2 microL; acc_ratios multiplied by 2.
+                    sample = lane_maps[index][counter]
+                    position = wells[wellIndex[1]],':',str(wellIndex[0])
+                    position = ''.join(position)
+                    output = location[sample][0],location[sample][1],str(int(acc_ratios[index][counter]*2)),str(destid[destNo]),position
+                    writer.writerow(output)
+                
+                #Increment wellsindex
+                if not wellIndex[1] >= 8:
+                    wellIndex[1] += 1
+                else:
+                    wellIndex[1] = 1
+                    if not wellIndex[0] >= 8:
+                        wellIndex[0] += 1
+                    else:
+                        wellIndex[0] = 1
+                        destNo += 1
+                        if destNo > len(destid):
+                            print "Critical error; not enough destination plates provided"
+                            pdb.set_trace()
+                            
+@click.command()
+@click.option('--project_id', required=True,help='REQUIRED: ID of project to repool. Examples:P2652, P1312 etc.')
+@click.option('--dest_plate_list', default=['dest_plate_1','dest_plate_2','dest_plate_3','dest_plate_4','dest_plate_5'], 
+              help='List of destination plates for the robot\'s csv file. Include too many rather than too few; excess will be unused Default:[dp_1,dep_2,dp_3,dp_4,dp_5]') 
+@click.option('--target_clusters', default=320*1000000, help='Threshold of clusters per sample. \nDefault:320*1000000')
+@click.option('--clusters_per_lane', default=380*1000000, help='Expected clusters generated by a single lane/well. \nDefault:380*1000000')            
 
+def main(target_clusters, clusters_per_lane, project_id, dest_plate_list):
+    """Application that calculates samples under threshold for a project, then calculate the optimal composition for reaching the threshold
+    without altering concentrations nor the structure of the pools. Outputs both a summary as well as a functional csv file."""
+    couch = connection()
+    structure = proj_struct(couch, project_id, target_clusters)
+    aggregator(structure, target_clusters, project_id, dest_plate_list)
 
-target_clusters = 320*1000000
-clusters_per_lane = 380*1000000
-
-couch = connection()
-structure = proj_struct(couch, 'P2652')
-aggregator(structure, target_clusters)
-pdb.set_trace()
+if __name__ == '__main__':
+    main()
