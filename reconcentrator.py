@@ -107,7 +107,7 @@ def aggregator(struct, target_clusters, project, destid):
     for values in counter.itervalues():
         if values > 1: 
             raise Exception('Error: This app does NOT handle situations where a sample is present in lanes/well with differing structure!')
-
+    
     #Gives how many percent of the lane should give clusters for a specific sample
     for index in lane_maps:
         summ = 0
@@ -149,6 +149,8 @@ def aggregator(struct, target_clusters, project, destid):
     for index in xrange(1, len(ideal_ratios.keys())+1):
         curSum = sum(ideal_ratios[index])    
         for sample in xrange(0, len(ideal_ratios[index])):
+            import pdb
+            pdb.set_trace()
             ideal_ratios[index][sample] = (ideal_ratios[index][sample]/curSum)*100
             
     
@@ -230,7 +232,6 @@ def aggregator(struct, target_clusters, project, destid):
 
     
     #Creates csv   
-    
     name = projName,"_repool_",timestamp,".csv"
     name = ''.join(name)
     wells = ['Empty','A','B','C','D','E','F','G','H']
